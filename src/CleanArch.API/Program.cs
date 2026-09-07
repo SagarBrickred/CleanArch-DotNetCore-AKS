@@ -153,7 +153,8 @@ builder.Host.UseSerilog((context, services, loggerConfig) =>
 builder.Services.AddApplicationInsightsTelemetry(options =>
 {
     options.ConnectionString = builder.Configuration["ApplicationInsights:ConnectionString"];
-    options.EnableAdaptiveSampling = true;
+    options.EnableAdaptiveSampling = false
+    ;
     options.EnableHeartbeat = true;
 });
 
