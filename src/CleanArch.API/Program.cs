@@ -37,16 +37,21 @@ var secretClient = new SecretClient(
     credential);
 
 KeyVaultSecret sqlSecret;
+KeyVaultSecret appInsightsSecret;
 
 try
 {
-    var response = await secretClient.GetSecretAsync("SqlConnectionString");
-    sqlSecret = response.Value;
+    var sqlResponse = await secretClient.GetSecretAsync("SqlConnectionString");
+    sqlSecret = sqlResponse.Value;
+
+    var appInsightsResponse =
+        await secretClient.GetSecretAsync("ApplicationInsightsConnectionString");
+    appInsightsSecret = appInsightsResponse.Value;
 }
 catch (Exception ex)
 {
     throw new InvalidOperationException(
-        "Unable to retrieve 'SqlConnectionString' from Azure Key Vault.",
+        "Unable to retrieve required secrets from Azure Key Vault.",
         ex);
 }
 
@@ -56,14 +61,47 @@ if (string.IsNullOrWhiteSpace(sqlSecret.Value))
         "Key Vault secret 'SqlConnectionString' is empty.");
 }
 
-// Make the secret available to the rest of the application.
+if (string.IsNullOrWhiteSpace(appInsightsSecret.Value))
+{
+    throw new InvalidOperationException(
+        "Key Vault secret 'ApplicationInsightsConnectionString' is empty.");
+}
+
+// Make secrets available to the rest of the application.
 builder.Configuration["ConnectionStrings:DefaultConnection"] =
     sqlSecret.Value;
+
+builder.Configuration["ApplicationInsights:ConnectionString"] =
+    appInsightsSecret.Value;
+//KeyVaultSecret sqlSecret;
+
+//try
+//{
+//    var response = await secretClient.GetSecretAsync("SqlConnectionString");
+//    sqlSecret = response.Value;
+//}
+//catch (Exception ex)
+//{
+//    throw new InvalidOperationException(
+//        "Unable to retrieve 'SqlConnectionString' from Azure Key Vault.",
+//        ex);
+//}
+
+//if (string.IsNullOrWhiteSpace(sqlSecret.Value))
+//{
+//    throw new InvalidOperationException(
+//        "Key Vault secret 'SqlConnectionString' is empty.");
+//}
+
+//// Make the secret available to the rest of the application.
+//builder.Configuration["ConnectionStrings:DefaultConnection"] =
+//    sqlSecret.Value;
 
 Console.WriteLine("========================================");
 Console.WriteLine($"Environment: {builder.Environment.EnvironmentName}");
 Console.WriteLine("Key Vault: Connected");
 Console.WriteLine("SqlConnectionString: Retrieved from Key Vault");
+Console.WriteLine("ApplicationInsights: ConnectionString retrieved from Key Vault");
 Console.WriteLine("========================================");
 //if (!string.IsNullOrWhiteSpace(keyVaultUri) && !builder.Environment.IsDevelopment())
 //{
