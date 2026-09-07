@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": { "value": "prod" },
+    "sqlAdminLogin": { "value": "cleanarchsqladmin" },
+    "sqlAadAdminObjectId": { "value": "<SET_AT_DEPLOY_TIME>" },
+    "kubernetesVersion": { "value": "1.29" },
+    "aksNodeCount": { "value": 3 }
+  }
+}

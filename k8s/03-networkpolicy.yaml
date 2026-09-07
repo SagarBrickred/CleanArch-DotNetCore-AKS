@@ -1,0 +1,37 @@
+# Default-deny with explicit allows: ingress only from the ingress-controller namespace,
+# egress only to DNS, Azure SQL (1433), and Azure public IP ranges (Key Vault/App Insights over 443).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cleanarch-api-netpol
+  namespace: cleanarch-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: cleanarch-api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0   # Azure SQL / Key Vault / App Insights are public PaaS endpoints reached over 443/1433;
+      ports:                  # tighten to Azure service tags / private endpoints CIDR if using VNet-integrated PaaS.
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 1433

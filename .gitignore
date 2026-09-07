@@ -1,0 +1,47 @@
+# .NET build output
+bin/
+obj/
+
+# Visual Studio
+.vs/
+*.user
+*.rsuser
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Development / backup files
+appsettings.Development.json.bak
+appsettings.Local.json
+appsettings.Secrets.json
+
+# Test results
+TestResults/
+
+# Logs
+*.log
+logs/
+
+# Publish output
+publish/
+artifacts/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# NuGet
+packages/
+*.nupkg
+*.snupkg
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker local override
+docker-compose.override.yml
+
+# Azure publishing credentials
+*.publishsettings

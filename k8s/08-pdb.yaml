@@ -1,0 +1,12 @@
+# Pod Disruption Budget — guarantees at least 2 pods stay up during voluntary disruptions
+# (node drains, cluster upgrades), preventing a full outage during AKS maintenance.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cleanarch-api-pdb
+  namespace: cleanarch-prod
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: cleanarch-api
