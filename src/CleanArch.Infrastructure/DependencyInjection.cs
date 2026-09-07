@@ -47,24 +47,11 @@ public static class DependencyInjection
         services.AddScoped<ICurrentUserService, CurrentUserService>();
 
         services.AddHealthChecks()
-            .AddCheck<DatabaseHealthCheck>("database", tags: new[] { "ready" })
-            .AddSqlServer(
-                connectionString,
-                name: "sql-connectivity",
-                tags: new[] { "ready" },
-                timeout: TimeSpan.FromSeconds(5));
-
-        var keyVaultUri = configuration["KeyVault:Uri"];
-        if (!string.IsNullOrWhiteSpace(keyVaultUri))
-        {
-            services.AddHealthChecks()
-                .AddAzureKeyVault(
-                    new Uri(keyVaultUri),
-                    new DefaultAzureCredential(),
-                    options => { },
-                    name: "keyvault",
-                    tags: new[] { "ready" });
-        }
+    .AddSqlServer(
+        connectionString,
+        name: "sql-connectivity",
+        tags: new[] { "ready" },
+        timeout: TimeSpan.FromSeconds(5));
 
         return services;
     }

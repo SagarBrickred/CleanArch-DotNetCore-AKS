@@ -25,7 +25,9 @@ builder.Services.AddHttpContextAccessor();
 // In AKS this resolves via Workload Identity / the Key Vault CSI driver's federated credential.
 // Locally, DefaultAzureCredential falls back to `az login` / Visual Studio / environment vars.
 // KeyVault:Uri itself is NOT a secret — it's fine in appsettings.Production.json or an env var.
-var keyVaultUri = builder.Configuration["KeyVault:Uri"];
+var keyVaultUri = builder.Configuration["KeyVault:Uri"]
+    ?? throw new InvalidOperationException(
+        "KeyVault:Uri is not configured.");
 TokenCredential credential = builder.Environment.IsDevelopment()
     ? new AzureCliCredential()
     : new DefaultAzureCredential();
@@ -240,7 +242,7 @@ if (!app.Environment.IsDevelopment())
 {
     app.UseHsts();
 }
-app.UseHttpsRedirection();
+//app.UseHttpsRedirection();
 
 app.UseSwagger();
 app.UseSwaggerUI();

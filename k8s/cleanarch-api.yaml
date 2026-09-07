@@ -2,27 +2,33 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: cleanarch-api
-  namespace: cleanarch-prod
+  namespace: cleanarch
   labels:
     app: cleanarch-api
+
 spec:
-  replicas: 3
+  replicas: 1
   revisionHistoryLimit: 5
+
   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
-      maxUnavailable: 0   # zero-downtime deploys — never drop below desired replica count
+      maxUnavailable: 0
+
   selector:
     matchLabels:
       app: cleanarch-api
+
   template:
     metadata:
       labels:
         app: cleanarch-api
         azure.workload.identity/use: "true"
+
     spec:
       serviceAccountName: cleanarch-api-sa
+
       securityContext:
         runAsNonRoot: true
         runAsUser: 1654
@@ -30,55 +36,61 @@ spec:
         fsGroup: 1654
         seccompProfile:
           type: RuntimeDefault
-      topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: topology.kubernetes.io/zone
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              app: cleanarch-api
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                topologyKey: kubernetes.io/hostname
-                labelSelector:
-                  matchLabels:
-                    app: cleanarch-api
+
       containers:
         - name: cleanarch-api
-          image: <ACR_LOGIN_SERVER>/cleanarch-api:<BUILD_TAG>   # substituted by the pipeline; never :latest in prod
+
+          image: acrcleanarchprod01.azurecr.io/cleanarch-api:1.0.0
           imagePullPolicy: Always
+
           ports:
             - containerPort: 8080
               name: http
+
           env:
             - name: ASPNETCORE_ENVIRONMENT
               value: "Production"
+
+            - name: ASPNETCORE_HTTP_PORTS
+              value: "8080"
+
             - name: KeyVault__Uri
               value: "https://kv-cleanarch-prod.vault.azure.net/"
-          envFrom:
-            - secretRef:
-                name: cleanarch-api-secrets   # synced by the CSI SecretProviderClass above
+
+            # Needed when using a read-only root filesystem
+            - name: HOME
+              value: "/tmp"
+
+            - name: TMPDIR
+              value: "/tmp"
+
           resources:
             requests:
               cpu: "250m"
               memory: "256Mi"
+
             limits:
               cpu: "1000m"
               memory: "512Mi"
+
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
-              drop: ["ALL"]
+              drop:
+                - ALL
+
           volumeMounts:
-            - name: secrets-store
-              mountPath: "/mnt/secrets-store"
-              readOnly: true
             - name: tmp
               mountPath: /tmp
+
+          startupProbe:
+            httpGet:
+              path: /health/startup
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 10
+
           livenessProbe:
             httpGet:
               path: /health/live
@@ -86,6 +98,7 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 15
             failureThreshold: 3
+
           readinessProbe:
             httpGet:
               path: /health/ready
@@ -93,19 +106,27 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
             failureThreshold: 3
-          startupProbe:
-            httpGet:
-              path: /health/startup
-              port: 8080
-            failureThreshold: 30     # up to 5 minutes for cold start + EF migration
-            periodSeconds: 10
+
       volumes:
-        - name: secrets-store
-          csi:
-            driver: secrets-store.csi.k8s.io
-            readOnly: true
-            volumeAttributes:
-              secretProviderClass: cleanarch-keyvault-secrets
         - name: tmp
           emptyDir: {}
+
       terminationGracePeriodSeconds: 30
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cleanarch-api
+  namespace: cleanarch
+
+spec:
+  type: LoadBalancer
+
+  selector:
+    app: cleanarch-api
+
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080

@@ -27,7 +27,7 @@ public static class HealthCheckExtensions
 
         app.MapHealthChecks("/health/startup", new HealthCheckOptions
         {
-            Predicate = check => check.Tags.Contains("ready"),
+            Predicate = _ => false,
             ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
         });
 
