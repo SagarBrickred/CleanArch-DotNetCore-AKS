@@ -1,0 +1,260 @@
+
+```yaml
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  azureServiceConnection: 'sc-cleanarch-prod'
+
+  resourceGroup: 'rg-cleanarch-prod'
+  aksCluster: 'aks-cleanarch-prod01'
+  aksNamespace: 'cleanarch-prod'
+
+  acrName: 'acrcleanarchprod01'
+  imageRepository: 'cleanarch-api'
+
+  dockerRegistry: 'acrcleanarchprod01.azurecr.io'
+
+stages:
+
+# ============================================================
+# 1. BUILD AND TEST
+# ============================================================
+- stage: Build
+  displayName: 'Build and Test'
+  jobs:
+
+  - job: BuildAndTest
+    displayName: 'Build .NET 8 Application'
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    steps:
+
+    - task: UseDotNet@2
+      displayName: 'Install .NET 8 SDK'
+      inputs:
+        packageType: 'sdk'
+        version: '8.x'
+
+    - script: |
+        dotnet restore CleanArchSolution.sln
+      displayName: 'Restore NuGet packages'
+
+    - script: |
+        dotnet build CleanArchSolution.sln \
+          --configuration Release \
+          --no-restore
+      displayName: 'Build solution'
+
+    - script: |
+        dotnet test CleanArchSolution.sln \
+          --configuration Release \
+          --no-build \
+          --verbosity normal
+      displayName: 'Run tests'
+
+
+# ============================================================
+# 2. BUILD DOCKER IMAGE AND PUSH TO ACR
+# ============================================================
+- stage: Docker
+  displayName: 'Build and Push Docker Image'
+  dependsOn: Build
+  condition: succeeded()
+
+  jobs:
+
+  - job: DockerBuild
+    displayName: 'Build and Push Image'
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    steps:
+
+    - checkout: self
+
+    - task: AzureCLI@2
+      displayName: 'Build and Push Image to ACR'
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+
+        inlineScript: |
+
+          set -e
+
+          IMAGE="$(dockerRegistry)/$(imageRepository):$(Build.BuildId)"
+
+          echo "Building image:"
+          echo "$IMAGE"
+
+          az acr login \
+            --name "$(acrName)"
+
+          docker build \
+            -t "$IMAGE" \
+            .
+
+          docker push "$IMAGE"
+
+          echo "Docker image pushed successfully:"
+          echo "$IMAGE"
+
+
+# ============================================================
+# 3. DEPLOY TO AKS
+# ============================================================
+- stage: Deploy
+  displayName: 'Deploy to AKS'
+  dependsOn: Docker
+  condition: succeeded()
+
+  jobs:
+
+  - deployment: DeployToAKS
+    displayName: 'Deploy CleanArch API'
+
+    environment: 'cleanarch-production'
+
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    strategy:
+
+      runOnce:
+
+        deploy:
+
+          steps:
+
+          - checkout: self
+
+          - task: AzureCLI@2
+            displayName: 'Deploy Kubernetes Resources'
+            inputs:
+
+              azureSubscription: '$(azureServiceConnection)'
+
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+
+              inlineScript: |
+
+                set -e
+
+                echo "Connecting to AKS..."
+
+                az aks get-credentials \
+                  --resource-group "$(resourceGroup)" \
+                  --name "$(aksCluster)" \
+                  --overwrite-existing
+
+                echo "Checking Kubernetes cluster..."
+
+                kubectl cluster-info
+
+                echo "Creating namespace if required..."
+
+                kubectl create namespace "$(aksNamespace)" \
+                  --dry-run=client \
+                  -o yaml | kubectl apply -f -
+
+                echo "Applying ServiceAccount..."
+
+                kubectl apply \
+                  -f k8s/06-serviceaccount.yaml
+
+                echo "Applying Deployment..."
+
+                kubectl apply \
+                  -f k8s/04-deployment.yaml
+
+                echo "Applying Service..."
+
+                kubectl apply \
+                  -f k8s/05-service.yaml
+
+                IMAGE="$(dockerRegistry)/$(imageRepository):$(Build.BuildId)"
+
+                echo "Updating deployment image:"
+                echo "$IMAGE"
+
+                kubectl -n "$(aksNamespace)" set image \
+                  deployment/cleanarch-api \
+                  cleanarch-api="$IMAGE"
+
+                echo "Waiting for rollout..."
+
+                kubectl -n "$(aksNamespace)" rollout status \
+                  deployment/cleanarch-api \
+                  --timeout=5m
+
+                echo "Deployment status:"
+
+                kubectl -n "$(aksNamespace)" get deployment \
+                  cleanarch-api
+
+                echo "Pod status:"
+
+                kubectl -n "$(aksNamespace)" get pods -o wide
+
+                echo "Service status:"
+
+                kubectl -n "$(aksNamespace)" get service \
+                  cleanarch-api-svc
+
+
+# ============================================================
+# 4. SMOKE TEST
+# ============================================================
+- stage: SmokeTest
+  displayName: 'Smoke Test'
+  dependsOn: Deploy
+  condition: succeeded()
+
+  jobs:
+
+  - job: HealthCheck
+    displayName: 'API Health Check'
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    steps:
+
+    - script: |
+
+        set -e
+
+        echo "Waiting for API..."
+
+        sleep 20
+
+        echo "Calling health endpoint..."
+
+        STATUS=$(curl \
+          -s \
+          -o /dev/null \
+          -w "%{http_code}" \
+          --max-time 30 \
+          http://20.248.255.205/health)
+
+        echo "HTTP Status: $STATUS"
+
+        if [ "$STATUS" != "200" ]; then
+          echo "Health check failed."
+          exit 1
+        fi
+
+        echo "Health check successful."
+
+      displayName: 'API Health Check'
+```
