@@ -56,6 +56,12 @@ spec:
 
             - name: KeyVault__Uri
               value: "https://kv-cleanarch-prod.vault.azure.net/"
+              
+            - name: Jwt__Authority
+              value: "https://login.microsoftonline.com/2e8cb550-807a-4e5c-81ce-6b06740b6dfe"
+
+            - name: Jwt__Audience
+              value: "api://3fc6c7b1-75ec-4f0e-80ea-e1c716721819"
 
             # Needed when using a read-only root filesystem
             - name: HOME
@@ -113,20 +119,3 @@ spec:
 
       terminationGracePeriodSeconds: 30
 
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: cleanarch-api
-  namespace: cleanarch
-
-spec:
-  type: LoadBalancer
-
-  selector:
-    app: cleanarch-api
-
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 8080

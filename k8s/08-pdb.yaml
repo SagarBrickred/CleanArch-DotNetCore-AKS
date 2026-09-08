@@ -4,7 +4,7 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: cleanarch-api-pdb
-  namespace: cleanarch-prod
+  namespace: cleanarch
 spec:
   minAvailable: 2
   selector:

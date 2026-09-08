@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ResourceQuota
 metadata:
   name: cleanarch-prod-quota
-  namespace: cleanarch-prod
+  namespace: cleanarch
 spec:
   hard:
     requests.cpu: "4"
