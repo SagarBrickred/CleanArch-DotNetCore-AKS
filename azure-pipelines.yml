@@ -420,11 +420,11 @@ stages:
             exit 1
           fi
 
-                    echo "========================================"
+          echo "========================================"
           echo "Testing health endpoint from inside cluster"
           echo "========================================"
 
-          SMOKE_POD="cleanarch-smoke-test-$(Build.BuildId)"
+                    SMOKE_POD="cleanarch-smoke-test-$(Build.BuildId)"
 
           cleanup() {
             kubectl -n "$(aksNamespace)" delete pod "$SMOKE_POD" \
@@ -433,19 +433,34 @@ stages:
 
           trap cleanup EXIT
 
-          kubectl -n "$(aksNamespace)" run \
-            "$SMOKE_POD" \
-            --restart=Never \
-            --image=curlimages/curl:8.10.1 \
-            --requests='cpu=10m,memory=16Mi' \
-            --limits='cpu=50m,memory=32Mi' \
-            --command \
-            -- curl \
-              --fail \
-              --silent \
-              --show-error \
-              --max-time 10 \
-              http://cleanarch-api-svc/health/ready
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: ${SMOKE_POD}
+            namespace: $(aksNamespace)
+          spec:
+            restartPolicy: Never
+            containers:
+              - name: curl
+                image: curlimages/curl:8.10.1
+                command:
+                  - curl
+                args:
+                  - --fail
+                  - --silent
+                  - --show-error
+                  - --max-time
+                  - "10"
+                  - http://cleanarch-api-svc/health/ready
+                resources:
+                  requests:
+                    cpu: 10m
+                    memory: 16Mi
+                  limits:
+                    cpu: 50m
+                    memory: 32Mi
+          EOF
 
           echo "Waiting for smoke test pod..."
 
@@ -454,6 +469,6 @@ stages:
             pod/"$SMOKE_POD" \
             --timeout=60s
 
-          echo "========================================"
-          echo "SMOKE TEST PASSED"
-          echo "========================================"
+          echo "Smoke test pod completed successfully"
+
+          kubectl -n "$(aksNamespace)" get pod "$SMOKE_POD"
