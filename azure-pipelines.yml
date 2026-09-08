@@ -423,10 +423,18 @@ stages:
           echo "========================================"
           echo "Testing health endpoint from inside cluster"
           echo "========================================"
+          
+          SMOKE_POD="cleanarch-smoke-test-$(Build.BuildId)"
+
+          cleanup() {
+            kubectl -n "$(aksNamespace)" delete pod "$SMOKE_POD" \
+              --ignore-not-found=true
+          }
+
+          trap cleanup EXIT
 
           kubectl -n "$(aksNamespace)" run \
-            cleanarch-smoke-test-$(Build.BuildId) \
-            --rm \
+            "$SMOKE_POD" \
             --restart=Never \
             --image=curlimages/curl:8.10.1 \
             --command \
@@ -436,6 +444,15 @@ stages:
               --show-error \
               --max-time 10 \
               http://cleanarch-api-svc/health/ready
+
+          echo "Waiting for smoke test pod..."
+
+          kubectl -n "$(aksNamespace)" wait \
+            --for=jsonpath='{.status.phase}'=Succeeded \
+            pod/"$SMOKE_POD" \
+            --timeout=60s
+
+          echo "Smoke test pod succeeded"
 
           echo "========================================"
           echo "SMOKE TEST PASSED"
