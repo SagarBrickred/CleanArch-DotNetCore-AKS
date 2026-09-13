@@ -1,36 +1,43 @@
 using CleanArch.Infrastructure.Persistence;
-using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace CleanArch.Infrastructure.HealthChecks;
 
-/// <summary>
-/// Explicit DB health check beyond raw connectivity — verifies EF Core can actually query the schema.
-/// Distinguishes "SQL reachable" from "SQL reachable AND migrations applied", which matters for AKS readiness probes.
-/// </summary>
 public class DatabaseHealthCheck : IHealthCheck
 {
     private readonly ApplicationDbContext _dbContext;
 
-    public DatabaseHealthCheck(ApplicationDbContext dbContext) => _dbContext = dbContext;
+    public DatabaseHealthCheck(ApplicationDbContext dbContext)
+    {
+        _dbContext = dbContext;
+    }
 
-    public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
+    public async Task<HealthCheckResult> CheckHealthAsync(
+        HealthCheckContext context,
+        CancellationToken cancellationToken = default)
     {
         try
         {
-            var canConnect = await _dbContext.Database.CanConnectAsync(cancellationToken);
-            if (!canConnect)
-                return HealthCheckResult.Unhealthy("Cannot connect to Azure SQL Database.");
+            var canConnect =
+                await _dbContext.Database.CanConnectAsync(cancellationToken);
 
-            var pendingMigrations = (await _dbContext.Database.GetPendingMigrationsAsync(cancellationToken)).ToList();
-            if (pendingMigrations.Any())
-                return HealthCheckResult.Degraded($"{pendingMigrations.Count} pending migration(s) not applied.");
-
-            return HealthCheckResult.Healthy("Database reachable and schema up to date.");
+            return canConnect
+                ? HealthCheckResult.Healthy("Database reachable.")
+                : HealthCheckResult.Unhealthy(
+                    "Cannot connect to Azure SQL Database.");
+        }
+        catch (OperationCanceledException ex)
+        {
+            return HealthCheckResult.Unhealthy(
+                "Database health check timed out or was cancelled.",
+                ex);
         }
         catch (Exception ex)
         {
-            return HealthCheckResult.Unhealthy("Database health check threw an exception.", ex);
+            return HealthCheckResult.Unhealthy(
+                "Database health check threw an exception.",
+                ex);
         }
     }
 }

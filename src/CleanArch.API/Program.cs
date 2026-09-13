@@ -167,16 +167,54 @@ builder.Services.AddInfrastructure(builder.Configuration);
 // ============================================================================
 // 5. AUTHENTICATION / AUTHORIZATION — Azure AD (Entra ID) JWT bearer
 // ============================================================================
+Console.WriteLine("========== JWT CONFIGURATION DEBUG ==========");
+Console.WriteLine($"Jwt:Authority = {builder.Configuration["Jwt:Authority"]}");
+Console.WriteLine($"Jwt:Audience  = {builder.Configuration["Jwt:Audience"]}");
+Console.WriteLine("=============================================");
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
-        options.Authority = builder.Configuration["Jwt:Authority"];   // e.g. https://login.microsoftonline.com/{tenantId}/v2.0
-        options.Audience = builder.Configuration["Jwt:Audience"];     // API's App Registration client id / App ID URI
+        options.Authority = builder.Configuration["Jwt:Authority"];
+        options.Audience = builder.Configuration["Jwt:Audience"];
         options.RequireHttpsMetadata = true;
+
         options.TokenValidationParameters.ValidateIssuer = true;
         options.TokenValidationParameters.ValidateAudience = true;
         options.TokenValidationParameters.ClockSkew = TimeSpan.FromMinutes(2);
+
+        options.Events = new JwtBearerEvents
+        {
+            OnAuthenticationFailed = context =>
+            {
+                Console.WriteLine("========== JWT AUTHENTICATION FAILED ==========");
+                Console.WriteLine($"Exception Type: {context.Exception.GetType().FullName}");
+                Console.WriteLine($"Exception Message: {context.Exception.Message}");
+                Console.WriteLine($"Authority: {context.Options.Authority}");
+                Console.WriteLine($"Audience: {context.Options.Audience}");
+                Console.WriteLine("================================================");
+                return Task.CompletedTask;
+            },
+
+            OnTokenValidated = context =>
+            {
+                Console.WriteLine("========== JWT TOKEN VALIDATED ==========");
+                Console.WriteLine($"Authentication Type: {context.Principal?.Identity?.AuthenticationType}");
+                Console.WriteLine($"Name: {context.Principal?.Identity?.Name}");
+                Console.WriteLine("=========================================");
+                return Task.CompletedTask;
+            },
+
+            OnChallenge = context =>
+            {
+                Console.WriteLine("========== JWT CHALLENGE ==========");
+                Console.WriteLine($"Error: {context.Error}");
+                Console.WriteLine($"Error Description: {context.ErrorDescription}");
+                Console.WriteLine("===================================");
+                return Task.CompletedTask;
+            }
+        };
     });
+
 builder.Services.AddAuthorization();
 
 // ============================================================================
@@ -299,3 +337,4 @@ app.Run();
 
 // Exposed for WebApplicationFactory-based integration tests.
 public partial class Program { }
+
