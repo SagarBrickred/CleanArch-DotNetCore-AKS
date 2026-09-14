@@ -10,9 +10,10 @@ pr:
 
 variables:
   azureServiceConnection: 'sc-cleanarch-prod'
-  resourceGroup: 'rg-cleanarch-prod'
-  aksCluster: 'aks-cleanarch-prod01'
-  aksNamespace: 'cleanarch'
+  resourceGroup: 'rg-order-dev'
+
+  stagingWebApp: 'app-cleanarch-dev-staging'
+  productionWebApp: 'app-cleanarch-dev-prod'
 
   acrName: 'acrcleanarchdev01'
   imageRepository: 'cleanarch-api'
@@ -136,18 +137,185 @@ stages:
 
 
 # ============================================================
-# 3. DEPLOY TO AKS
+# 3. DEPLOY TO STAGING APP SERVICE
 # ============================================================
-- stage: Deploy
-  displayName: 'Deploy to AKS'
+- stage: DeployStaging
+  displayName: 'Deploy to Staging App Service'
 
   dependsOn: Docker
   condition: succeeded()
 
   jobs:
 
-  - deployment: DeployToAKS
-    displayName: 'Deploy CleanArch API'
+  - deployment: DeployToStaging
+    displayName: 'Deploy CleanArch API to Staging'
+
+    environment: 'cleanarch-staging'
+
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    strategy:
+      runOnce:
+        deploy:
+
+          steps:
+
+          - checkout: self
+
+          - task: AzureCLI@2
+            displayName: 'Deploy Container to Staging App Service'
+
+            inputs:
+              azureSubscription: '$(azureServiceConnection)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+
+              inlineScript: |
+
+                set -e
+
+                IMAGE="$(dockerRegistry)/$(imageRepository):$(Build.BuildId)"
+
+                echo "========================================"
+                echo "Deploying image to Staging"
+                echo "$IMAGE"
+                echo "========================================"
+
+                az webapp config container set \
+                  --resource-group "$(resourceGroup)" \
+                  --name "$(stagingWebApp)" \
+                  --container-image-name "$IMAGE"
+
+                echo "========================================"
+                echo "Restarting Staging App Service"
+                echo "========================================"
+
+                az webapp restart \
+                  --resource-group "$(resourceGroup)" \
+                  --name "$(stagingWebApp)"
+
+                echo "========================================"
+                echo "Verifying deployed image"
+                echo "========================================"
+
+                DEPLOYED_IMAGE=$(az webapp config container show \
+                  --resource-group "$(resourceGroup)" \
+                  --name "$(stagingWebApp)" \
+                  --query "[?name=='DOCKER_CUSTOM_IMAGE_NAME'].value | [0]" \
+                  -o tsv)
+
+                echo "Expected image:"
+                echo "DOCKER|$IMAGE"
+
+                echo "Actual image:"
+                echo "$DEPLOYED_IMAGE"
+
+                if [ "$DEPLOYED_IMAGE" != "DOCKER|$IMAGE" ]; then
+                  echo "ERROR: Staging App Service image does not match expected image."
+                  exit 1
+                fi
+
+                echo "========================================"
+                echo "Staging deployment successful"
+                echo "========================================"
+
+
+# ============================================================
+# 4. STAGING SMOKE TEST
+# ============================================================
+- stage: SmokeTestStaging
+  displayName: 'Smoke Test Staging App Service'
+
+  dependsOn: DeployStaging
+  condition: succeeded()
+
+  jobs:
+
+  - job: StagingHealthCheck
+    displayName: 'Validate Staging API'
+
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    steps:
+
+    - checkout: self
+
+    - task: AzureCLI@2
+      displayName: 'Validate Staging Health Endpoints'
+
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+
+        inlineScript: |
+
+          set -e
+
+          echo "========================================"
+          echo "Getting Staging App Service hostname"
+          echo "========================================"
+
+          HOSTNAME=$(az webapp show \
+            --resource-group "$(resourceGroup)" \
+            --name "$(stagingWebApp)" \
+            --query "defaultHostName" \
+            -o tsv)
+
+          echo "Staging hostname:"
+          echo "$HOSTNAME"
+
+          if [ -z "$HOSTNAME" ]; then
+            echo "ERROR: Could not determine Staging App Service hostname."
+            exit 1
+          fi
+
+          echo "========================================"
+          echo "Testing /health/live"
+          echo "========================================"
+
+          curl --fail --silent --show-error \
+            --max-time 30 \
+            "https://$HOSTNAME/health/live"
+
+          echo
+          echo "========================================"
+          echo "Testing /health/ready"
+          echo "========================================"
+
+          curl --fail --silent --show-error \
+            --max-time 30 \
+            "https://$HOSTNAME/health/ready"
+
+          echo
+          echo "========================================"
+          echo "Testing /health/startup"
+          echo "========================================"
+
+          curl --fail --silent --show-error \
+            --max-time 30 \
+            "https://$HOSTNAME/health/startup"
+
+          echo
+          echo "========================================"
+          echo "Staging smoke test successful"
+          echo "========================================"
+
+# ============================================================
+# 5. DEPLOY TO PRODUCTION APP SERVICE
+# ============================================================
+- stage: DeployProduction
+  displayName: 'Deploy to Production App Service'
+
+  dependsOn: SmokeTestStaging
+  condition: succeeded()
+
+  jobs:
+
+  - deployment: DeployToProduction
+    displayName: 'Deploy CleanArch API to Production'
 
     environment: 'cleanarch-production'
 
@@ -163,7 +331,7 @@ stages:
           - checkout: self
 
           - task: AzureCLI@2
-            displayName: 'Deploy Kubernetes Resources'
+            displayName: 'Deploy Container to Production App Service'
 
             inputs:
               azureSubscription: '$(azureServiceConnection)'
@@ -172,185 +340,65 @@ stages:
 
               inlineScript: |
 
-                set -u
+                set -e
 
                 IMAGE="$(dockerRegistry)/$(imageRepository):$(Build.BuildId)"
 
                 echo "========================================"
-                echo "Connecting to AKS"
-                echo "========================================"
-
-                az aks get-credentials \
-                  --resource-group "$(resourceGroup)" \
-                  --name "$(aksCluster)" \
-                  --overwrite-existing
-
-                kubectl cluster-info
-
-                echo "========================================"
-                echo "Applying Namespace"
-                echo "========================================"
-
-                kubectl apply \
-                  -f k8s/00-namespace.yaml
-
-                echo "========================================"
-                echo "Applying ServiceAccount"
-                echo "========================================"
-
-                kubectl apply \
-                  -f k8s/01-serviceaccount.yaml
-
-                echo "========================================"
-                echo "Applying SecretProviderClass"
-                echo "========================================"
-
-                kubectl apply \
-                  -f k8s/02-secretproviderclass.yaml
-
-                echo "========================================"
-                echo "Applying Deployment"
-                echo "========================================"
-
-                kubectl apply \
-                  -f k8s/04-deployment.yaml
-
-                echo "========================================"
-                echo "Applying Service"
-                echo "========================================"
-
-                kubectl apply \
-                  -f k8s/05-service.yaml
-
-                echo "========================================"
-                echo "Applying HPA"
-                echo "========================================"
-
-                kubectl apply \
-                  -f k8s/07-hpa.yaml
-
-                echo "========================================"
-                echo "Applying PDB"
-                echo "========================================"
-
-                kubectl apply \
-                  -f k8s/08-pdb.yaml
-
-                echo "========================================"
-                echo "Applying ResourceQuota"
-                echo "========================================"
-
-                kubectl apply \
-                  -f k8s/09-resourcequota.yaml
-
-                echo "========================================"
-                echo "Updating image"
+                echo "Deploying image to Production"
                 echo "$IMAGE"
                 echo "========================================"
 
-                kubectl -n "$(aksNamespace)" set image \
-                  deployment/cleanarch-api \
-                  cleanarch-api="$IMAGE"
+                az webapp config container set \
+                  --resource-group "$(resourceGroup)" \
+                  --name "$(productionWebApp)" \
+                  --container-image-name "$IMAGE"
 
                 echo "========================================"
-                echo "Waiting for rollout"
+                echo "Restarting Production App Service"
                 echo "========================================"
 
-                if kubectl -n "$(aksNamespace)" rollout status \
-                  deployment/cleanarch-api \
-                  --timeout=5m
-                then
+                az webapp restart \
+                  --resource-group "$(resourceGroup)" \
+                  --name "$(productionWebApp)"
 
-                  echo "========================================"
-                  echo "Rollout successful"
-                  echo "========================================"
+                echo "========================================"
+                echo "Verifying deployed image"
+                echo "========================================"
 
-                else
+                DEPLOYED_IMAGE=$(az webapp config container show \
+                  --resource-group "$(resourceGroup)" \
+                  --name "$(productionWebApp)" \
+                  --query "[?name=='DOCKER_CUSTOM_IMAGE_NAME'].value | [0]" \
+                  -o tsv)
 
-                  echo "========================================"
-                  echo "ROLLOUT FAILED"
-                  echo "Starting rollback"
-                  echo "========================================"
+                echo "Expected image:"
+                echo "DOCKER|$IMAGE"
 
-                  kubectl -n "$(aksNamespace)" get pods -o wide || true
+                echo "Actual image:"
+                echo "$DEPLOYED_IMAGE"
 
-                  kubectl -n "$(aksNamespace)" describe deployment \
-                    cleanarch-api || true
-
-                  kubectl -n "$(aksNamespace)" rollout history \
-                    deployment/cleanarch-api || true
-
-                  echo "========================================"
-                  echo "Rolling back deployment"
-                  echo "========================================"
-
-                  kubectl -n "$(aksNamespace)" rollout undo \
-                    deployment/cleanarch-api
-
-                  echo "========================================"
-                  echo "Waiting for rollback"
-                  echo "========================================"
-
-                  kubectl -n "$(aksNamespace)" rollout status \
-                    deployment/cleanarch-api \
-                    --timeout=5m || true
-
-                  echo "========================================"
-                  echo "Rollback completed"
-                  echo "Failing pipeline"
-                  echo "========================================"
-
+                if [ "$DEPLOYED_IMAGE" != "DOCKER|$IMAGE" ]; then
+                  echo "ERROR: Production App Service image does not match expected image."
                   exit 1
-
                 fi
 
                 echo "========================================"
-                echo "Deployment"
+                echo "Production deployment successful"
                 echo "========================================"
-
-                kubectl -n "$(aksNamespace)" get deployment \
-                  cleanarch-api
-
-                echo "========================================"
-                echo "Pods"
-                echo "========================================"
-
-                kubectl -n "$(aksNamespace)" get pods -o wide
-
-                echo "========================================"
-                echo "HPA"
-                echo "========================================"
-
-                kubectl -n "$(aksNamespace)" get hpa \
-                  cleanarch-api-hpa
-
-                echo "========================================"
-                echo "PDB"
-                echo "========================================"
-
-                kubectl -n "$(aksNamespace)" get pdb \
-                  cleanarch-api-pdb
-
-                echo "========================================"
-                echo "Service"
-                echo "========================================"
-
-                kubectl -n "$(aksNamespace)" get service
-
-
 # ============================================================
-# 4. SMOKE TEST
+# 6. PRODUCTION SMOKE TEST
 # ============================================================
-- stage: SmokeTest
-  displayName: 'Smoke Test'
+- stage: SmokeTestProduction
+  displayName: 'Smoke Test Production App Service'
 
-  dependsOn: Deploy
+  dependsOn: DeployProduction
   condition: succeeded()
 
   jobs:
 
-  - job: HealthCheck
-    displayName: 'API Health Check'
+  - job: ProductionHealthCheck
+    displayName: 'Validate Production API'
 
     pool:
       vmImage: 'ubuntu-latest'
@@ -360,7 +408,7 @@ stages:
     - checkout: self
 
     - task: AzureCLI@2
-      displayName: 'Validate API Health'
+      displayName: 'Validate Production Health Endpoints'
 
       inputs:
         azureSubscription: '$(azureServiceConnection)'
@@ -372,103 +420,50 @@ stages:
           set -e
 
           echo "========================================"
-          echo "Getting AKS credentials"
+          echo "Getting Production App Service hostname"
           echo "========================================"
 
-          az aks get-credentials \
+          HOSTNAME=$(az webapp show \
             --resource-group "$(resourceGroup)" \
-            --name "$(aksCluster)" \
-            --overwrite-existing
+            --name "$(productionWebApp)" \
+            --query "defaultHostName" \
+            -o tsv)
 
-          echo "========================================"
-          echo "Checking deployment"
-          echo "========================================"
+          echo "Production hostname:"
+          echo "$HOSTNAME"
 
-          kubectl -n "$(aksNamespace)" get deployment \
-            cleanarch-api
-
-          echo "========================================"
-          echo "Checking pods"
-          echo "========================================"
-
-          kubectl -n "$(aksNamespace)" get pods \
-            -l app=cleanarch-api \
-            -o wide
-
-          echo "========================================"
-          echo "Checking readiness"
-          echo "========================================"
-
-          READY=$(kubectl -n "$(aksNamespace)" get pods \
-            -l app=cleanarch-api \
-            -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}')
-
-          echo "Pod readiness:"
-          echo "$READY"
-
-          POD_COUNT=$(kubectl -n "$(aksNamespace)" get pods \
-            -l app=cleanarch-api \
-            --no-headers 2>/dev/null | wc -l)
-
-          if [ "$POD_COUNT" -eq 0 ]; then
-            echo "No API pods found."
-            exit 1
-          fi
-
-          if [ "$(echo "$READY" | grep -c '^True$')" -ne "$POD_COUNT" ]; then
-            echo "One or more API pods are not Ready."
+          if [ -z "$HOSTNAME" ]; then
+            echo "ERROR: Could not determine Production App Service hostname."
             exit 1
           fi
 
           echo "========================================"
-          echo "Testing health endpoint from inside cluster"
+          echo "Testing /health/live"
           echo "========================================"
 
-                    SMOKE_POD="cleanarch-smoke-test-$(Build.BuildId)"
+          curl --fail --silent --show-error \
+            --max-time 30 \
+            "https://$HOSTNAME/health/live"
 
-          cleanup() {
-            kubectl -n "$(aksNamespace)" delete pod "$SMOKE_POD" \
-              --ignore-not-found=true
-          }
+          echo
+          echo "========================================"
+          echo "Testing /health/ready"
+          echo "========================================"
 
-          trap cleanup EXIT
+          curl --fail --silent --show-error \
+            --max-time 30 \
+            "https://$HOSTNAME/health/ready"
 
-          cat <<EOF | kubectl apply -f -
-          apiVersion: v1
-          kind: Pod
-          metadata:
-            name: ${SMOKE_POD}
-            namespace: $(aksNamespace)
-          spec:
-            restartPolicy: Never
-            containers:
-              - name: curl
-                image: curlimages/curl:8.10.1
-                command:
-                  - curl
-                args:
-                  - --fail
-                  - --silent
-                  - --show-error
-                  - --max-time
-                  - "10"
-                  - http://cleanarch-api-svc/health/ready
-                resources:
-                  requests:
-                    cpu: 10m
-                    memory: 16Mi
-                  limits:
-                    cpu: 50m
-                    memory: 32Mi
-          EOF
+          echo
+          echo "========================================"
+          echo "Testing /health/startup"
+          echo "========================================"
 
-          echo "Waiting for smoke test pod..."
+          curl --fail --silent --show-error \
+            --max-time 30 \
+            "https://$HOSTNAME/health/startup"
 
-          kubectl -n "$(aksNamespace)" wait \
-            --for=jsonpath='{.status.phase}'=Succeeded \
-            pod/"$SMOKE_POD" \
-            --timeout=60s
-
-          echo "Smoke test pod completed successfully"
-
-          kubectl -n "$(aksNamespace)" get pod "$SMOKE_POD"
+          echo
+          echo "========================================"
+          echo "Production smoke test successful"
+          echo "========================================"
