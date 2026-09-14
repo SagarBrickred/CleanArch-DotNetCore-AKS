@@ -288,6 +288,10 @@ stages:
             echo "TCP 443 NOT reachable"
           fi
 
+          echo "Agent public IP:"
+          curl -4 -s https://api.ipify.org
+          echo
+
           echo "========================================"
           echo "Testing /health/live"
           echo "========================================"
