@@ -292,7 +292,8 @@ stages:
           echo "Testing /health/live"
           echo "========================================"
 
-          curl --fail --silent --show-error \
+          curl -4 -v --fail --show-error \
+            --connect-timeout 10 \
             --max-time 30 \
             "https://$HOSTNAME/health/live"
 
