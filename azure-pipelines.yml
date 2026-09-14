@@ -273,6 +273,22 @@ stages:
           fi
 
           echo "========================================"
+          echo "Testing DNS resolution"
+          echo "========================================"
+
+          getent hosts "$HOSTNAME"
+
+          echo "========================================"
+          echo "Testing TCP 443 connectivity"
+          echo "========================================"
+
+          if timeout 10 bash -c "</dev/tcp/$HOSTNAME/443"; then
+            echo "TCP 443 reachable"
+          else
+            echo "TCP 443 NOT reachable"
+          fi
+
+          echo "========================================"
           echo "Testing /health/live"
           echo "========================================"
 
