@@ -14,9 +14,9 @@ variables:
   aksCluster: 'aks-cleanarch-prod01'
   aksNamespace: 'cleanarch'
 
-  acrName: 'acrcleanarchprod01'
+  acrName: 'acrcleanarchdev01'
   imageRepository: 'cleanarch-api'
-  dockerRegistry: 'acrcleanarchprod01.azurecr.io'
+  dockerRegistry: 'acrcleanarchdev01.azurecr.io'
 
 stages:
 
