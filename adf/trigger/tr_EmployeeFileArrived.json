@@ -1,0 +1,29 @@
+{
+	"name": "tr_EmployeeFileArrived",
+	"properties": {
+		"description": "Fires when an employee CSV lands in input",
+		"annotations": [],
+		"runtimeState": "Started",
+		"pipelines": [
+			{
+				"pipelineReference": {
+					"referenceName": "pl_EmployeeImport",
+					"type": "PipelineReference"
+				},
+				"parameters": {
+					"FileName": "@concat('employee/', triggerBody().fileName)"
+				}
+			}
+		],
+		"type": "BlobEventsTrigger",
+		"typeProperties": {
+			"blobPathBeginsWith": "/input/blobs/employee/",
+			"blobPathEndsWith": ".csv",
+			"ignoreEmptyBlobs": true,
+			"scope": "/subscriptions/f3603dca-d93d-4657-9c3e-f3e02fa84934/resourceGroups/rg-order-dev/providers/Microsoft.Storage/storageAccounts/storderdev2325ed",
+			"events": [
+				"Microsoft.Storage.BlobCreated"
+			]
+		}
+	}
+}

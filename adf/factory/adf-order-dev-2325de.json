@@ -1,0 +1,15 @@
+{
+	"name": "adf-order-dev-2325de",
+	"properties": {
+		"trustModeClaimForMi": {
+			"value": "Disabled",
+			"editable": true
+		}
+	},
+	"location": "australiaeast",
+	"identity": {
+		"type": "SystemAssigned",
+		"principalId": "6d60eab4-6e4a-4e24-b127-55391b2ed9e2",
+		"tenantId": "2e8cb550-807a-4e5c-81ce-6b06740b6dfe"
+	}
+}
