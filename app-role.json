@@ -1,0 +1,12 @@
+[
+  {
+    "allowedMemberTypes": [
+      "User"
+    ],
+    "description": "Allows users to create, update, and delete products.",
+    "displayName": "Product Write",
+    "id": "7db15bd0-3dc2-421f-ad4a-0c482447ed44",
+    "isEnabled": true,
+    "value": "Product.Write"
+  }
+]

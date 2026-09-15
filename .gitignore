@@ -45,3 +45,7 @@ docker-compose.override.yml
 
 # Azure publishing credentials
 *.publishsettings
+# Azure Data Factory CI/CD build output
+adf-build/node_modules/
+adf-build/downloads/
+adf-build/ArmTemplate/
