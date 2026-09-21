@@ -1,0 +1,32 @@
+name: Copilot Reviewer
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  copilot-requests: write
+
+jobs:
+  reviewer-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Copilot CLI
+        run: npm install -g @github/copilot
+
+      - name: Run Reviewer agent
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          copilot --agent=Reviewer --yolo -p "Review the changes introduced in this pull request against the base branch. Follow your agent instructions exactly and produce the Blocking / Should fix / Nice to have report."
