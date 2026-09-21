@@ -6,27 +6,128 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
   copilot-requests: write
 
 jobs:
   reviewer-agent:
+    name: AI PR Review
     runs-on: ubuntu-latest
+
     steps:
+
       - name: Checkout PR
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
 
       - name: Install Copilot CLI
         run: npm install -g @github/copilot
 
-      - name: Run Reviewer agent
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Show PR information
         run: |
-          copilot --agent=Reviewer --yolo -p "Review the changes introduced in this pull request against the base branch. Follow your agent instructions exactly and produce the Blocking / Should fix / Nice to have report."
+          echo "Repository : ${{ github.repository }}"
+          echo "PR number  : ${{ github.event.pull_request.number }}"
+          echo "Base SHA   : ${{ github.event.pull_request.base.sha }}"
+          echo "Head SHA   : ${{ github.event.pull_request.head.sha }}"
+
+      - name: Run Reviewer Agent
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "Preparing PR diff"
+          echo "=========================================="
+
+          git diff \
+            "$BASE_SHA...$HEAD_SHA" \
+            -- \
+            ':!**/bin/**' \
+            ':!**/obj/**' \
+            > /tmp/pr-diff.patch
+
+          echo "Changed files:"
+          git diff \
+            --name-only \
+            "$BASE_SHA...$HEAD_SHA"
+
+          echo "=========================================="
+          echo "Running Reviewer Agent"
+          echo "=========================================="
+
+          copilot \
+            --agent reviewer \
+            --yolo \
+            -p "You are reviewing GitHub Pull Request #${PR_NUMBER}.
+
+            Repository:
+            ${{ github.repository }}
+
+            Base commit:
+            ${BASE_SHA}
+
+            Head commit:
+            ${HEAD_SHA}
+
+            Review ONLY the changes introduced by this pull request.
+
+            Use the git diff between BASE_SHA and HEAD_SHA.
+
+            Follow the instructions in .github/agents/reviewer.agent.md exactly.
+
+            Review particularly for:
+
+            1. Functional correctness
+            2. Clean Architecture violations
+            3. ASP.NET Core issues
+            4. C#/.NET 8 issues
+            5. SQL/EF Core issues
+            6. Security vulnerabilities
+            7. Authentication and authorization
+            8. Azure configuration and Managed Identity
+            9. Docker/container security
+            10. Kubernetes configuration
+            11. CI/CD risks
+            12. Test coverage and regression risk
+            13. Performance issues
+            14. Logging/observability problems
+            15. Secrets or credentials accidentally introduced
+
+            Classify findings into exactly:
+
+            BLOCKING
+            SHOULD FIX
+            NICE TO HAVE
+
+            For every finding provide:
+
+            - Severity
+            - File
+            - Line/range
+            - Problem
+            - Why it matters
+            - Recommended fix
+
+            Do not report purely stylistic preferences.
+
+            Do not modify files.
+
+            At the end provide:
+
+            REVIEW SUMMARY
+            BLOCKING COUNT
+            SHOULD FIX COUNT
+            NICE TO HAVE COUNT
+
+            The review must be based on the actual PR diff, not assumptions."
