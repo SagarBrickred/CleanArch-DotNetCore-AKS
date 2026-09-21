@@ -1,0 +1,7 @@
+{
+    "properties":  {
+                       "siteConfig":  {
+                                          "linuxFxVersion":  "DOCKER|acrcleanarchdev01.azurecr.io/cleanarch-api:1.0.4"
+                                      }
+                   }
+}

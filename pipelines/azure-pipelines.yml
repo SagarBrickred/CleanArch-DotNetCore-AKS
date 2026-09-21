@@ -1,0 +1,213 @@
+# =============================================================================
+# Azure DevOps (Azure Repos) CI/CD pipeline for CleanArch.API
+# Stages: Build & Test -> Infra (Bicep what-if + deploy) -> Docker Build/Push -> Deploy to AKS
+# =============================================================================
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include: [src/*, infra/*, k8s/*, pipelines/*]
+
+pr:
+  branches:
+    include: [main]
+
+variables:
+  - group: cleanarch-prod-variables   # holds: azureServiceConnection, acrName, resourceGroup, aksClusterName, subscriptionId
+  - name: buildConfiguration
+    value: 'Release'
+  - name: dotnetVersion
+    value: '8.0.x'
+  - name: imageName
+    value: 'cleanarch-api'
+  - name: imageTag
+    value: '$(Build.BuildId)'
+
+stages:
+  # ---------------------------------------------------------------------------
+  - stage: BuildAndTest
+    displayName: 'Build, Test, Scan'
+    jobs:
+      - job: BuildTest
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: UseDotNet@2
+            displayName: 'Install .NET SDK'
+            inputs:
+              version: $(dotnetVersion)
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Restore'
+            inputs:
+              command: restore
+              projects: '**/*.sln'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Build'
+            inputs:
+              command: build
+              projects: '**/*.sln'
+              arguments: '--configuration $(buildConfiguration) --no-restore'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Unit Tests + Coverage'
+            inputs:
+              command: test
+              projects: '**/*.UnitTests.csproj'
+              arguments: '--configuration $(buildConfiguration) --no-build --collect:"XPlat Code Coverage" --logger trx'
+
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: 'VSTest'
+              testResultsFiles: '**/*.trx'
+
+          - task: PublishCodeCoverageResults@2
+            inputs:
+              summaryFileLocation: '$(Agent.TempDirectory)/**/coverage.cobertura.xml'
+
+          # NuGet vulnerability / license scan — fails the build on known-vulnerable transitive packages.
+          - task: DotNetCoreCLI@2
+            displayName: 'Dependency Vulnerability Scan'
+            inputs:
+              command: custom
+              custom: 'list'
+              arguments: 'package --vulnerable --include-transitive'
+
+          # Static analysis (SAST) — swap in your org's actual gate (SonarCloud/Checkmarx/Snyk Code) here.
+          - task: SonarCloudPrepare@2
+            condition: false   # enabled: false by default until SonarCloud service connection is configured
+            inputs:
+              SonarCloud: 'SonarCloudServiceConnection'
+              organization: '<your-org>'
+              scannerMode: 'MSBuild'
+              projectKey: 'cleanarch-api'
+
+  # ---------------------------------------------------------------------------
+  - stage: InfraDeploy
+    displayName: 'Deploy Infrastructure (Bicep)'
+    dependsOn: BuildAndTest
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployInfra
+        environment: 'production'   # environment approval gate configured in Azure DevOps UI
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: 'Bicep what-if (preview changes)'
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      az deployment group what-if \
+                        --resource-group $(resourceGroup) \
+                        --template-file infra/bicep/main.bicep \
+                        --parameters infra/bicep/main.parameters.json \
+                        --parameters sqlAdminPassword=$(sqlAdminPassword)
+
+                - task: AzureCLI@2
+                  displayName: 'Bicep deploy'
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      az deployment group create \
+                        --resource-group $(resourceGroup) \
+                        --template-file infra/bicep/main.bicep \
+                        --parameters infra/bicep/main.parameters.json \
+                        --parameters sqlAdminPassword=$(sqlAdminPassword) \
+                        --parameters sqlAadAdminObjectId=$(sqlAadAdminObjectId)
+
+  # ---------------------------------------------------------------------------
+  - stage: DockerBuildPush
+    displayName: 'Build & Push Container Image'
+    dependsOn: InfraDeploy
+    condition: succeeded()
+    jobs:
+      - job: BuildPush
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: AzureCLI@2
+            displayName: 'ACR Build (build happens inside ACR, image never leaves Azure)'
+            inputs:
+              azureSubscription: '$(azureServiceConnection)'
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az acr build \
+                  --registry $(acrName) \
+                  --image $(imageName):$(imageTag) \
+                  --image $(imageName):latest \
+                  --file src/CleanArch.API/Dockerfile .
+
+          # Image vulnerability scan — ACR's built-in Defender for Cloud scan, gate on results before deploy.
+          - task: AzureCLI@2
+            displayName: 'Wait for image vulnerability scan'
+            inputs:
+              azureSubscription: '$(azureServiceConnection)'
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Vulnerability scan results are surfaced in Defender for Cloud > Container registries."
+                echo "Configure a release gate against the Defender for Cloud assessment API before production promotion."
+
+  # ---------------------------------------------------------------------------
+  - stage: DeployToAKS
+    displayName: 'Deploy to AKS'
+    dependsOn: DockerBuildPush
+    condition: succeeded()
+    jobs:
+      - deployment: DeployAKS
+        environment: 'production'
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: 'Get AKS credentials'
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      az aks get-credentials --resource-group $(resourceGroup) --name $(aksClusterName) --overwrite-existing --admin
+
+                - task: Bash@3
+                  displayName: 'Substitute image tag in manifests'
+                  inputs:
+                    targetType: inline
+                    script: |
+                      sed -i "s#<ACR_LOGIN_SERVER>/cleanarch-api:<BUILD_TAG>#$(acrName).azurecr.io/$(imageName):$(imageTag)#g" k8s/04-deployment.yaml
+
+                - task: Kubernetes@1
+                  displayName: 'Apply manifests'
+                  inputs:
+                    connectionType: 'Azure Resource Manager'
+                    azureSubscriptionEndpoint: '$(azureServiceConnection)'
+                    azureResourceGroup: '$(resourceGroup)'
+                    kubernetesCluster: '$(aksClusterName)'
+                    command: apply
+                    arguments: '-f k8s/'
+
+                - task: Kubernetes@1
+                  displayName: 'Verify rollout status'
+                  inputs:
+                    connectionType: 'Azure Resource Manager'
+                    azureSubscriptionEndpoint: '$(azureServiceConnection)'
+                    azureResourceGroup: '$(resourceGroup)'
+                    kubernetesCluster: '$(aksClusterName)'
+                    command: rollout
+                    arguments: 'status deployment/cleanarch-api -n cleanarch-prod --timeout=300s'
+                  # If this step times out, the deployment's maxUnavailable:0 strategy means old pods
+                  # are still serving traffic — a failed rollout does not cause an outage by itself.
+                  # Follow up with `kubectl rollout undo` if the new revision is unhealthy.

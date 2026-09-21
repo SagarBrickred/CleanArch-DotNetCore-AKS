@@ -1,0 +1,566 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+
+- group: vg-cleanarch-dev-kv
+
+- name: azureServiceConnection
+  value: 'sc-cleanarch-prod'
+
+- name: resourceGroup
+  value: 'rg-order-dev'
+
+- name: stagingWebApp
+  value: 'app-cleanarch-dev-staging'
+
+- name: productionWebApp
+  value: 'app-cleanarch-dev-prod'
+
+- name: acrName
+  value: 'acrcleanarchdev01'
+
+- name: imageRepository
+  value: 'cleanarch-api'
+
+- name: dockerRegistry
+  value: 'acrcleanarchdev01.azurecr.io'
+
+stages:
+
+# ============================================================
+# 1. BUILD AND TEST
+# ============================================================
+- stage: Build
+  displayName: 'Build and Test'
+
+  jobs:
+  - job: BuildAndTest
+    displayName: 'Build .NET 8 Application'
+
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    steps:
+
+    - checkout: self
+
+    - task: UseDotNet@2
+      displayName: 'Install .NET 8 SDK'
+      inputs:
+        packageType: 'sdk'
+        version: '8.x'
+
+    - script: |
+        set -e
+        dotnet restore CleanArchSolution.sln
+      displayName: 'Restore NuGet packages'
+
+    - script: |
+        set -e
+        dotnet build CleanArchSolution.sln \
+          --configuration Release \
+          --no-restore
+      displayName: 'Build solution'
+
+    - script: |
+        set -e
+        dotnet test CleanArchSolution.sln \
+          --configuration Release \
+          --no-build \
+          --verbosity normal
+      displayName: 'Run tests'
+
+
+# ============================================================
+# 2. BUILD AZURE DATA FACTORY ARM ARTIFACT
+# ============================================================
+- stage: BuildADF
+  displayName: 'Build ADF ARM Artifact'
+
+  dependsOn: Build
+  condition: succeeded()
+
+  jobs:
+  - job: BuildADFArtifact
+    displayName: 'Validate and Export ADF'
+
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    steps:
+
+    - checkout: self
+
+    - task: UseNode@1
+      displayName: 'Install Node.js 20'
+      inputs:
+        version: '20.x'
+
+    - script: |
+        set -e
+
+        cd adf-build
+
+        npm ci
+      displayName: 'Install ADF build dependencies'
+
+    - script: |
+        set -e
+
+        cd adf-build
+
+        npm run build validate \
+          "../adf" \
+          "/subscriptions/f3603dca-d93d-4657-9c3e-f3e02fa84934/resourceGroups/rg-order-dev/providers/Microsoft.DataFactory/factories/adf-order-dev-2325de"
+      displayName: 'Validate ADF'
+
+    - script: |
+        set -e
+
+        cd adf-build
+
+        rm -rf ArmTemplate
+
+        npm run build export \
+          "../adf" \
+          "/subscriptions/f3603dca-d93d-4657-9c3e-f3e02fa84934/resourceGroups/rg-order-dev/providers/Microsoft.DataFactory/factories/adf-order-dev-2325de" \
+          "./ArmTemplate"
+      displayName: 'Export ADF ARM Template'
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish ADF ARM Artifact'
+      inputs:
+        targetPath: 'adf-build/ArmTemplate'
+        artifact: 'adf-arm-template'
+        publishLocation: 'pipeline'
+# ============================================================
+# 3. BUILD AND PUSH DOCKER IMAGE
+# ============================================================
+- stage: Docker
+  displayName: 'Build and Push Docker Image'
+
+  dependsOn: Build
+  condition: succeeded()
+
+  jobs:
+  - job: DockerBuild
+    displayName: 'Build and Push Image'
+
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    steps:
+
+    - checkout: self
+
+    - task: AzureCLI@2
+      displayName: 'Build and Push Image to ACR'
+
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+
+        inlineScript: |
+
+          set -e
+
+          IMAGE="$(dockerRegistry)/$(imageRepository):$(Build.BuildId)"
+
+          echo "========================================"
+          echo "Azure subscription"
+          echo "========================================"
+
+          az account show \
+            --query "{subscription:id,tenant:tenantId}" \
+            -o table
+
+          echo "========================================"
+          echo "Logging into ACR"
+          echo "========================================"
+
+          az acr login \
+            --name "$(acrName)"
+
+          echo "========================================"
+          echo "Building Docker image"
+          echo "$IMAGE"
+          echo "========================================"
+
+          docker build \
+            --pull \
+            -t "$IMAGE" \
+            .
+
+          echo "========================================"
+          echo "Pushing Docker image"
+          echo "========================================"
+
+          docker push "$IMAGE"
+
+          echo "========================================"
+          echo "Image successfully pushed"
+          echo "$IMAGE"
+          echo "========================================"
+
+
+# ============================================================
+# 4. DEPLOY TO STAGING APP SERVICE
+# ============================================================
+- stage: DeployStaging
+  displayName: 'Deploy to Staging App Service'
+
+  dependsOn: Docker
+  condition: succeeded()
+
+  jobs:
+
+  - deployment: DeployToStaging
+    displayName: 'Deploy CleanArch API to Staging'
+
+    environment: 'cleanarch-staging'
+
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    strategy:
+      runOnce:
+        deploy:
+
+          steps:
+
+          - checkout: self
+
+          - task: AzureCLI@2
+            displayName: 'Deploy Container to Staging App Service'
+
+            inputs:
+              azureSubscription: '$(azureServiceConnection)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+
+              inlineScript: |
+
+                set -e
+
+                IMAGE="$(dockerRegistry)/$(imageRepository):$(Build.BuildId)"
+
+                echo "========================================"
+                echo "Deploying image to Staging"
+                echo "$IMAGE"
+                echo "========================================"
+
+                az webapp config container set \
+                  --resource-group "$(resourceGroup)" \
+                  --name "$(stagingWebApp)" \
+                  --container-image-name "$IMAGE"
+
+                echo "========================================"
+                echo "Restarting Staging App Service"
+                echo "========================================"
+
+                az webapp restart \
+                  --resource-group "$(resourceGroup)" \
+                  --name "$(stagingWebApp)"
+
+                echo "========================================"
+                echo "Verifying deployed image"
+                echo "========================================"
+
+                DEPLOYED_IMAGE=$(az webapp config container show \
+                  --resource-group "$(resourceGroup)" \
+                  --name "$(stagingWebApp)" \
+                  --query "[?name=='DOCKER_CUSTOM_IMAGE_NAME'].value | [0]" \
+                  -o tsv)
+
+                echo "Expected image:"
+                echo "DOCKER|$IMAGE"
+
+                echo "Actual image:"
+                echo "$DEPLOYED_IMAGE"
+
+                if [ "$DEPLOYED_IMAGE" != "DOCKER|$IMAGE" ]; then
+                  echo "ERROR: Staging App Service image does not match expected image."
+                  exit 1
+                fi
+
+                echo "========================================"
+                echo "Staging deployment successful"
+                echo "========================================"
+
+
+# ============================================================
+# 5. STAGING SMOKE TEST
+# ============================================================
+- stage: SmokeTestStaging
+  displayName: 'Smoke Test Staging App Service'
+
+  dependsOn: DeployStaging
+  condition: succeeded()
+
+  jobs:
+
+  - job: StagingHealthCheck
+    displayName: 'Validate Staging API'
+
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    steps:
+
+    - checkout: self
+
+    - task: AzureCLI@2
+      displayName: 'Validate Staging Health Endpoints'
+
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+
+        inlineScript: |
+
+          set -e
+
+          echo "========================================"
+          echo "Getting Staging App Service hostname"
+          echo "========================================"
+
+          HOSTNAME=$(az webapp show \
+            --resource-group "$(resourceGroup)" \
+            --name "$(stagingWebApp)" \
+            --query "defaultHostName" \
+            -o tsv)
+
+          echo "Staging hostname:"
+          echo "$HOSTNAME"
+
+          if [ -z "$HOSTNAME" ]; then
+            echo "ERROR: Could not determine Staging App Service hostname."
+            exit 1
+          fi
+
+          echo "========================================"
+          echo "Testing DNS resolution"
+          echo "========================================"
+
+          getent hosts "$HOSTNAME"
+
+          echo "========================================"
+          echo "Testing TCP 443 connectivity"
+          echo "========================================"
+
+          if timeout 10 bash -c "</dev/tcp/$HOSTNAME/443"; then
+            echo "TCP 443 reachable"
+          else
+            echo "TCP 443 NOT reachable"
+          fi
+
+          echo "Agent public IP:"
+          curl -4 -s https://api.ipify.org
+          echo
+
+          echo "========================================"
+          echo "Testing /health/live"
+          echo "========================================"
+
+          curl -4 -v --fail --show-error \
+            --connect-timeout 10 \
+            --max-time 30 \
+            "https://$HOSTNAME/health/live"
+
+          echo
+          echo "========================================"
+          echo "Testing /health/ready"
+          echo "========================================"
+
+          curl --fail --silent --show-error \
+            --max-time 30 \
+            "https://$HOSTNAME/health/ready"
+
+          echo
+          echo "========================================"
+          echo "Testing /health/startup"
+          echo "========================================"
+
+          curl --fail --silent --show-error \
+            --max-time 30 \
+            "https://$HOSTNAME/health/startup"
+
+          echo
+          echo "========================================"
+          echo "Staging smoke test successful"
+          echo "========================================"
+
+# ============================================================
+# 6. DEPLOY TO PRODUCTION APP SERVICE
+# ============================================================
+- stage: DeployProduction
+  displayName: 'Deploy to Production App Service'
+
+  dependsOn: SmokeTestStaging
+  condition: succeeded()
+
+  jobs:
+
+  - deployment: DeployToProduction
+    displayName: 'Deploy CleanArch API to Production'
+
+    environment: 'cleanarch-production'
+
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    strategy:
+      runOnce:
+        deploy:
+
+          steps:
+
+          - checkout: self
+
+          - task: AzureCLI@2
+            displayName: 'Deploy Container to Production App Service'
+
+            inputs:
+              azureSubscription: '$(azureServiceConnection)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+
+              inlineScript: |
+
+                set -e
+
+                IMAGE="$(dockerRegistry)/$(imageRepository):$(Build.BuildId)"
+
+                echo "========================================"
+                echo "Deploying image to Production"
+                echo "$IMAGE"
+                echo "========================================"
+
+                az webapp config container set \
+                  --resource-group "$(resourceGroup)" \
+                  --name "$(productionWebApp)" \
+                  --container-image-name "$IMAGE"
+
+                echo "========================================"
+                echo "Restarting Production App Service"
+                echo "========================================"
+
+                az webapp restart \
+                  --resource-group "$(resourceGroup)" \
+                  --name "$(productionWebApp)"
+
+                echo "========================================"
+                echo "Verifying deployed image"
+                echo "========================================"
+
+                DEPLOYED_IMAGE=$(az webapp config container show \
+                  --resource-group "$(resourceGroup)" \
+                  --name "$(productionWebApp)" \
+                  --query "[?name=='DOCKER_CUSTOM_IMAGE_NAME'].value | [0]" \
+                  -o tsv)
+
+                echo "Expected image:"
+                echo "DOCKER|$IMAGE"
+
+                echo "Actual image:"
+                echo "$DEPLOYED_IMAGE"
+
+                if [ "$DEPLOYED_IMAGE" != "DOCKER|$IMAGE" ]; then
+                  echo "ERROR: Production App Service image does not match expected image."
+                  exit 1
+                fi
+
+                echo "========================================"
+                echo "Production deployment successful"
+                echo "========================================"
+# ============================================================
+# 7. PRODUCTION SMOKE TEST
+# ============================================================
+- stage: SmokeTestProduction
+  displayName: 'Smoke Test Production App Service'
+
+  dependsOn: DeployProduction
+  condition: succeeded()
+
+  jobs:
+
+  - job: ProductionHealthCheck
+    displayName: 'Validate Production API'
+
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    steps:
+
+    - checkout: self
+
+    - task: AzureCLI@2
+      displayName: 'Validate Production Health Endpoints'
+
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+
+        inlineScript: |
+
+          set -e
+
+          echo "========================================"
+          echo "Getting Production App Service hostname"
+          echo "========================================"
+
+          HOSTNAME=$(az webapp show \
+            --resource-group "$(resourceGroup)" \
+            --name "$(productionWebApp)" \
+            --query "defaultHostName" \
+            -o tsv)
+
+          echo "Production hostname:"
+          echo "$HOSTNAME"
+
+          if [ -z "$HOSTNAME" ]; then
+            echo "ERROR: Could not determine Production App Service hostname."
+            exit 1
+          fi
+
+          echo "========================================"
+          echo "Testing /health/live"
+          echo "========================================"
+
+          curl --fail --silent --show-error \
+            --max-time 30 \
+            "https://$HOSTNAME/health/live"
+
+          echo
+          echo "========================================"
+          echo "Testing /health/ready"
+          echo "========================================"
+
+          curl --fail --silent --show-error \
+            --max-time 30 \
+            "https://$HOSTNAME/health/ready"
+
+          echo
+          echo "========================================"
+          echo "Testing /health/startup"
+          echo "========================================"
+
+          curl --fail --silent --show-error \
+            --max-time 30 \
+            "https://$HOSTNAME/health/startup"
+
+          echo
+          echo "========================================"
+          echo "Production smoke test successful"
+          echo "========================================"

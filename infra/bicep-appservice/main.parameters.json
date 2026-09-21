@@ -1,0 +1,33 @@
+﻿{
+    "$schema":  "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+    "contentVersion":  "1.0.0.0",
+    "parameters":  {
+                       "environmentName":  {
+                                               "value":  "dev"
+                                           },
+                       "location":  {
+                                        "value":  "australiaeast"
+                                    },
+                       "existingSqlServerName":  {
+                                                     "value":  "sql-order-dev-2325de"
+                                                 },
+                       "cleanArchDatabaseName":  {
+                                                     "value":  "sqldb-cleanarch-dev"
+                                                 },
+                       "existingKeyVaultName":  {
+                                                    "value":  "kv-order-dev-2325de"
+                                                },
+                       "appServiceSkuName":  {
+                                                 "value":  "B1"
+                                             },
+                       "appServiceSkuTier":  {
+                                                 "value":  "Basic"
+                                             },
+                       "containerRepository":  {
+                                                   "value":  "cleanarch-api"
+                                               },
+                       "acrSkuName":  {
+                                          "value":  "Standard"
+                                      }
+                   }
+}

@@ -1,0 +1,11 @@
+{
+	"name": "ls_KeyVault",
+	"type": "Microsoft.DataFactory/factories/linkedservices",
+	"properties": {
+		"annotations": [],
+		"type": "AzureKeyVault",
+		"typeProperties": {
+			"baseUrl": "https://kv-order-dev-2325de.vault.azure.net/"
+		}
+	}
+}

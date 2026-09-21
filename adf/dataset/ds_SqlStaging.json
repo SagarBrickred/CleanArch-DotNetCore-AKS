@@ -1,0 +1,48 @@
+{
+	"name": "ds_SqlStaging",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "ls_AzureSql",
+			"type": "LinkedServiceReference"
+		},
+		"annotations": [],
+		"type": "AzureSqlTable",
+		"schema": [
+			{
+				"name": "BatchId",
+				"type": "uniqueidentifier"
+			},
+			{
+				"name": "Id",
+				"type": "nvarchar"
+			},
+			{
+				"name": "Name",
+				"type": "nvarchar"
+			},
+			{
+				"name": "Email",
+				"type": "nvarchar"
+			},
+			{
+				"name": "DepartmentId",
+				"type": "int",
+				"precision": 10
+			},
+			{
+				"name": "SourceFile",
+				"type": "nvarchar"
+			},
+			{
+				"name": "LoadedAt",
+				"type": "datetime2",
+				"scale": 7
+			}
+		],
+		"typeProperties": {
+			"schema": "dbo",
+			"table": "stg_employees"
+		}
+	},
+	"type": "Microsoft.DataFactory/factories/datasets"
+}

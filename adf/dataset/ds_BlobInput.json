@@ -1,0 +1,40 @@
+{
+	"name": "ds_BlobInput",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "ls_BlobStorage",
+			"type": "LinkedServiceReference"
+		},
+		"parameters": {
+			"FileSystem": {
+				"type": "string",
+				"defaultValue": "input"
+			},
+			"FilePath": {
+				"type": "string"
+			}
+		},
+		"annotations": [],
+		"type": "DelimitedText",
+		"typeProperties": {
+			"location": {
+				"type": "AzureBlobStorageLocation",
+				"fileName": {
+					"value": "@dataset().FilePath",
+					"type": "Expression"
+				},
+				"container": {
+					"value": "@dataset().FileSystem",
+					"type": "Expression"
+				}
+			},
+			"columnDelimiter": ",",
+			"encodingName": "UTF-8 without BOM",
+			"escapeChar": "\\",
+			"firstRowAsHeader": true,
+			"quoteChar": "\""
+		},
+		"schema": []
+	},
+	"type": "Microsoft.DataFactory/factories/datasets"
+}

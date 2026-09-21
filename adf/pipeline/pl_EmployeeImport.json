@@ -1,0 +1,465 @@
+{
+	"name": "pl_EmployeeImport",
+	"properties": {
+		"activities": [
+			{
+				"name": "GenerateBatchId",
+				"type": "SetVariable",
+				"dependsOn": [],
+				"policy": {
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"variableName": "BatchId",
+					"value": {
+						"value": "@guid()",
+						"type": "Expression"
+					}
+				}
+			},
+			{
+				"name": "GetFileMetadata",
+				"type": "GetMetadata",
+				"dependsOn": [
+					{
+						"activity": "GenerateBatchId",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"dataset": {
+						"referenceName": "ds_BlobInput",
+						"type": "DatasetReference",
+						"parameters": {
+							"FileSystem": "input",
+							"FilePath": "@pipeline().parameters.FileName"
+						}
+					},
+					"fieldList": [
+						"exists"
+					],
+					"storeSettings": {
+						"type": "AzureBlobStorageReadSettings",
+						"recursive": true,
+						"enablePartitionDiscovery": false
+					},
+					"formatSettings": {
+						"type": "DelimitedTextReadSettings"
+					}
+				}
+			},
+			{
+				"name": "CheckAlreadyProcessed",
+				"type": "Lookup",
+				"dependsOn": [
+					{
+						"activity": "GetFileMetadata",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "AzureSqlSource",
+						"sqlReaderQuery": {
+							"value": "SELECT COUNT(*) AS AlreadyProcessed FROM dbo.adf_control WHERE FileName = '@{pipeline().parameters.FileName}' AND Status = 'COMPLETED'",
+							"type": "Expression"
+						},
+						"queryTimeout": "02:00:00",
+						"partitionOption": "None"
+					},
+					"dataset": {
+						"referenceName": "ds_SqlStaging",
+						"type": "DatasetReference"
+					},
+					"firstRowOnly": true
+				}
+			},
+			{
+				"name": "IfAlreadyProcessed",
+				"type": "IfCondition",
+				"dependsOn": [
+					{
+						"activity": "CheckAlreadyProcessed",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"expression": {
+						"value": "@greater(int(activity('CheckAlreadyProcessed').output.firstRow.AlreadyProcessed), 0)",
+						"type": "Expression"
+					},
+					"ifFalseActivities": [
+						{
+							"name": "RecordStart",
+							"type": "SqlServerStoredProcedure",
+							"dependsOn": [],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"storedProcedureName": "[dbo].[usp_RecordBatchStart]",
+								"storedProcedureParameters": {
+									"FileName": {
+										"value": {
+											"value": "@pipeline().parameters.FileName",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"BatchId": {
+										"value": {
+											"value": "@variables('BatchId')",
+											"type": "Expression"
+										},
+										"type": "String"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_AzureSql",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "CopyToStaging",
+							"type": "Copy",
+							"dependsOn": [
+								{
+									"activity": "RecordStart",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"source": {
+									"type": "DelimitedTextSource",
+									"additionalColumns": [
+										{
+											"name": "BatchId",
+											"value": {
+												"value": "@variables('BatchId')",
+												"type": "Expression"
+											}
+										},
+										{
+											"name": "LoadedAt",
+											"value": {
+												"value": "@utcnow()",
+												"type": "Expression"
+											}
+										},
+										{
+											"name": "SourceFile",
+											"value": {
+												"value": "@pipeline().parameters.FileName",
+												"type": "Expression"
+											}
+										}
+									],
+									"storeSettings": {
+										"type": "AzureBlobStorageReadSettings",
+										"recursive": true,
+										"enablePartitionDiscovery": false
+									},
+									"formatSettings": {
+										"type": "DelimitedTextReadSettings"
+									}
+								},
+								"sink": {
+									"type": "AzureSqlSink",
+									"writeBatchSize": 10000,
+									"writeBehavior": "insert"
+								},
+								"enableStaging": false,
+								"translator": {
+									"type": "TabularTranslator",
+									"mappings": [
+										{
+											"source": {
+												"name": "Id"
+											},
+											"sink": {
+												"name": "Id"
+											}
+										},
+										{
+											"source": {
+												"name": "Name"
+											},
+											"sink": {
+												"name": "Name"
+											}
+										},
+										{
+											"source": {
+												"name": "Email"
+											},
+											"sink": {
+												"name": "Email"
+											}
+										},
+										{
+											"source": {
+												"name": "DepartmentId"
+											},
+											"sink": {
+												"name": "DepartmentId"
+											}
+										},
+										{
+											"source": {
+												"name": "BatchId"
+											},
+											"sink": {
+												"name": "BatchId"
+											}
+										},
+										{
+											"source": {
+												"name": "SourceFile",
+												"type": "AdditionalColumns"
+											},
+											"sink": {
+												"name": "SourceFile"
+											}
+										},
+										{
+											"source": {
+												"name": "LoadedAt",
+												"type": "AdditionalColumns"
+											},
+											"sink": {
+												"name": "LoadedAt"
+											}
+										}
+									]
+								}
+							},
+							"inputs": [
+								{
+									"referenceName": "ds_BlobInput",
+									"type": "DatasetReference",
+									"parameters": {
+										"FileSystem": "input",
+										"FilePath": "@pipeline().parameters.FileName"
+									}
+								}
+							],
+							"outputs": [
+								{
+									"referenceName": "ds_SqlStaging",
+									"type": "DatasetReference"
+								}
+							]
+						},
+						{
+							"name": "MergeToProduction",
+							"type": "SqlServerStoredProcedure",
+							"dependsOn": [
+								{
+									"activity": "CopyToStaging",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"storedProcedureName": "[dbo].[usp_MergeEmployeesFromStaging]",
+								"storedProcedureParameters": {
+									"BatchId": {
+										"value": {
+											"value": "@variables('BatchId')",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"RowsRead": {
+										"value": 0,
+										"type": "Int32"
+									},
+									"RowsWritten": {
+										"value": 0,
+										"type": "Int32"
+									},
+									"RowsRejected": {
+										"value": 0,
+										"type": "Int32"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_AzureSql",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "RecordCompletion",
+							"type": "SqlServerStoredProcedure",
+							"dependsOn": [
+								{
+									"activity": "MergeToProduction",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"storedProcedureName": "[dbo].[usp_RecordBatchComplete]",
+								"storedProcedureParameters": {
+									"BatchId": {
+										"value": {
+											"value": "@variables('BatchId')",
+											"type": "Expression"
+										},
+										"type": "String"
+									},
+									"Status": {
+										"value": "COMPLETED",
+										"type": "String"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "ls_AzureSql",
+								"type": "LinkedServiceReference"
+							}
+						},
+						{
+							"name": "MoveToProcessed",
+							"type": "Copy",
+							"dependsOn": [
+								{
+									"activity": "RecordCompletion",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"source": {
+									"type": "DelimitedTextSource",
+									"storeSettings": {
+										"type": "AzureBlobStorageReadSettings",
+										"recursive": true,
+										"enablePartitionDiscovery": false
+									},
+									"formatSettings": {
+										"type": "DelimitedTextReadSettings"
+									}
+								},
+								"sink": {
+									"type": "DelimitedTextSink",
+									"storeSettings": {
+										"type": "AzureBlobStorageWriteSettings"
+									},
+									"formatSettings": {
+										"type": "DelimitedTextWriteSettings",
+										"quoteAllText": true,
+										"fileExtension": ".txt"
+									}
+								},
+								"enableStaging": false
+							},
+							"inputs": [
+								{
+									"referenceName": "ds_BlobInput",
+									"type": "DatasetReference",
+									"parameters": {
+										"FileSystem": "input",
+										"FilePath": "@pipeline().parameters.FileName"
+									}
+								}
+							],
+							"outputs": [
+								{
+									"referenceName": "ds_BlobInput",
+									"type": "DatasetReference",
+									"parameters": {
+										"FileSystem": "input",
+										"FilePath": "@pipeline().parameters.FileName"
+									}
+								}
+							]
+						}
+					]
+				}
+			}
+		],
+		"parameters": {
+			"FileName": {
+				"type": "string"
+			}
+		},
+		"variables": {
+			"BatchId": {
+				"type": "String"
+			}
+		},
+		"annotations": [],
+		"lastPublishTime": "2026-09-11T14:26:20Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cleanarch-prod
+  labels:
+    name: cleanarch-prod
+    environment: production

@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cleanarch-api
+  namespace: cleanarch
+  labels:
+    app: cleanarch-api
+
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  selector:
+    matchLabels:
+      app: cleanarch-api
+
+  template:
+    metadata:
+      labels:
+        app: cleanarch-api
+        azure.workload.identity/use: "true"
+
+    spec:
+      serviceAccountName: cleanarch-api-sa
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1654
+        runAsGroup: 1654
+        fsGroup: 1654
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: cleanarch-api
+
+          image: acrcleanarchprod01.azurecr.io/cleanarch-api:1.0.0
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 8080
+              name: http
+
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: "Production"
+
+            - name: ASPNETCORE_HTTP_PORTS
+              value: "8080"
+
+            - name: KeyVault__Uri
+              value: "https://kv-cleanarch-prod.vault.azure.net/"
+              
+            - name: Jwt__Authority
+              value: "https://login.microsoftonline.com/2e8cb550-807a-4e5c-81ce-6b06740b6dfe"
+
+            - name: Jwt__Audience
+              value: "api://3fc6c7b1-75ec-4f0e-80ea-e1c716721819"
+
+            # Needed when using a read-only root filesystem
+            - name: HOME
+              value: "/tmp"
+
+            - name: TMPDIR
+              value: "/tmp"
+
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+          startupProbe:
+            httpGet:
+              path: /health/startup
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 10
+
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
+      terminationGracePeriodSeconds: 30
+
