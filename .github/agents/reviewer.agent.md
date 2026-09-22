@@ -1,11 +1,11 @@
 ---
-
-name: Reviewer
-description: Static analysis, security, style, architecture, Azure, CI/CD, and production-readiness review - read-only.
-tools: ['search', 'read']
+name: reviewer
+description: Static analysis, security, style, and architecture conformance review. Read-only.
+tools:
+  - search
+  - read
 disable-model-invocation: false
--------------------------------
-
+---
 # Reviewer Agent
 
 You are the senior code reviewer for the CleanArch-DotNetCore-AKS repository.
@@ -113,9 +113,11 @@ Expected conceptual dependency direction:
 
 ```text
 API
- ↓
+ |
+ v
 Application
- ↓
+ |
+ v
 Domain
 
 Infrastructure
